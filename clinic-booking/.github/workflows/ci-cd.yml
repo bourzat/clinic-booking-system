@@ -1,0 +1,75 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]   # a merged PR lands here as a push to main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: clinic
+          POSTGRES_PASSWORD: clinic
+          POSTGRES_DB: clinic_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U clinic"
+          --health-interval 2s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://clinic:clinic@localhost:5432/clinic_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run test suite (real Postgres, real migrations)
+        run: pytest -v
+
+      - name: Check the Docker image builds
+        run: docker build -t clinic-booking-api:ci .
+
+  deploy:
+    name: Deploy to Render
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Trigger Render deploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          test -n "$RENDER_DEPLOY_HOOK_URL" || { echo "RENDER_DEPLOY_HOOK_URL secret is not set"; exit 1; }
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+
+      - name: Wait for the new version to be live
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          for i in $(seq 1 60); do
+            body=$(curl -fsS "$APP_URL/health" || true)
+            echo "attempt $i: $body"
+            case "$body" in
+              *"${GITHUB_SHA}"*) echo "Deployed ${GITHUB_SHA}"; exit 0 ;;
+            esac
+            sleep 10
+          done
+          echo "New commit did not go live within 10 minutes"; exit 1
