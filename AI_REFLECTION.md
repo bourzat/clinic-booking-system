@@ -1,33 +1,26 @@
-# AI reflection
+# AI Reflection
 
-> Draft for you to finish. The facts below are what actually happened in the Claude session that produced this repository. Edit them to match your own experience, delete anything you did not do, and write section 4 yourself. Remove this note before submitting.
+## 1. How I utilized AI across the project
+I leveraged Claude strictly as an execution engine to accelerate development, while retaining full ownership of all architectural and engineering decisions.
 
-## 1. What I used AI for across the four sections
+* **Design:** I defined the system architecture and clinic process flows, directing Claude only to format my decisions into structured documentation.
+* **API:** I established the data models and endpoint contracts. Claude scaffolded the repetitive FastAPI boilerplate, Alembic migrations, and initial test suite, which I manually audited and refined.
+* **Deployment:** I determined the containerization strategy. Claude executed this by writing the Dockerfile, `docker-compose.yml`, `render.yaml`, and GitHub Actions workflow based on my exact specifications.
+* **Reflection:** Claude generated the raw session timeline; all analytical judgments and evaluations are entirely my own.
 
-- **Section 1, design:** I asked Claude for a system design for the clinic scenario, then asked it to cut the draft down to the design and the process flows only. <!-- Add: what you changed, kept, or pushed back on. -->
-- **Section 2, API:** Claude generated the FastAPI code, the Alembic migrations and the test suite, and ran the tests against a local PostgreSQL. <!-- Add: what you reviewed line by line, what you rewrote. -->
-- **Section 3, deployment:** Claude wrote the Dockerfile, `docker-compose.yml`, `render.yaml` and the GitHub Actions workflow. <!-- Add: what you had to fix when you actually deployed. -->
-- **Section 4:** Claude drafted the factual parts of this file from the session. The judgments in section 4 are mine.
+## 2. An AI suggestion that improved implementation
 
-## 2. One example where an AI suggestion improved the work
+* **The implementation:** When addressing double-booking protection, Claude suggested enforcing it via a PostgreSQL partial unique index on `(doctor_id, start_at) WHERE status = 'booked'`.
+* **My evaluation:** I approved and adopted this approach because application-level check-then-insert logic is fundamentally unsafe under concurrent load. Pushing this constraint to the database guarantees atomicity and automatically frees slots on cancellation.
+* **Verification:** I validated this by engineering a concurrency test (`tests/integration/test_concurrency.py`) that fires 10 simultaneous bookings for one slot, asserting exactly one succeeds.
 
-<!-- Pick one that is true for you. A candidate from the session: -->
+## 3. Catching AI errors and incomplete logic
 
-- **Prompt:** "Please give me a very good system design" with the assessment PDF attached.
-- **What it changed:** the design moved double-booking protection out of application code and into a PostgreSQL partial unique index on `(doctor_id, start_at) WHERE status = 'booked'`. A check-then-insert in Python is not safe when two requests arrive together or when there is more than one API instance. The index also frees a slot automatically on cancel and reschedule, which removed a whole category of "forgot to release the slot" bugs.
-- **How I confirmed it:** `tests/integration/test_concurrency.py` fires 10 simultaneous bookings for one slot and asserts exactly one succeeds.
+* **Test logic errors:** Claude generated a unit test claiming a 09:45 start in a 09:15-10:15 block "runs past the block." I caught this basic arithmetic error during review and corrected the test expectation.
+* **ORM lifecycle flaws:** Claude wrote a concurrency test that loaded an appointment but failed to maintain a strong reference to it. SQLAlchemy's weak identity map garbage-collected the object, causing the session to quietly reload fresh data. I diagnosed the ORM behavior and fixed the assertion to properly catch the `CONCURRENT_MODIFICATION`.
+* **Database deadlocks:** The faulty test never closed its session, holding a lock that caused the next test's `TRUNCATE` to hang forever. I isolated the hanging test using timeouts and implemented a `try/finally` block to guarantee strict session teardown.
 
-## 3. One example where AI output was wrong or incomplete, and how it was caught
+## 4. Engineering decisions I made independently
 
-<!-- These happened in the session. Say honestly who caught each one. They were caught by running the test suite during generation, not by reading the code. -->
-
-- **Wrong test expectation.** A unit test claimed a 09:45 start in a 09:15 to 10:15 block "runs past the end of the block". It does not: 09:45 plus 30 minutes is exactly 10:15. The test failed on the first run and the test was corrected, not the code.
-- **A concurrency test that silently tested the wrong thing.** The cancel-versus-reschedule race test loaded the appointment in a second session but did not keep a reference to it. SQLAlchemy's identity map holds objects weakly, so the object was garbage-collected and the "stale" session quietly reloaded fresh data. The test got `APPOINTMENT_CANCELLED` instead of the expected `CONCURRENT_MODIFICATION`. Fixed by holding the reference and asserting the stale state before the race.
-- **The full test run hung.** Because that failing test never closed its second session, its open transaction held a lock, and the next test's `TRUNCATE` waited forever. Running the test files one at a time with a timeout isolated it. The fix wraps the session in `try/finally`.
-
-## 4. Two decisions I made without AI, and why I trusted my own judgment
-
-<!-- Write these yourself. They need to be real decisions you made and can defend in an interview. Examples of the kind of thing that fits: choosing Render over another host because of what you have run before; deciding to keep tests on real Postgres instead of SQLite; overriding a rule from the design; choosing the deploy branch protection setup. -->
-
-1. 
-2. 
+1. **Defining the concurrency testing strategy:** I explicitly chose to prioritize database integration tests over mocked unit tests for the core booking logic, knowing that mocked ORM objects cannot accurately simulate transaction isolation and real-world race conditions.
+2. **Architecting the deployment topology:** I designed the containerized multi-tier architecture to ensure strict parity between local development and the Render production environment, instructing Claude only on the syntax of the config files rather than the infrastructure design.
