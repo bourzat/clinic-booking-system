@@ -10,7 +10,8 @@ class Base(DeclarativeBase):
     pass
 
 
-engine = create_engine(get_settings().database_url, pool_pre_ping=True)
+# Server-side prepared statements break behind a transaction-mode pooler such as Neon's PgBouncer.
+engine = create_engine(get_settings().database_url, pool_pre_ping=True, connect_args={"prepare_threshold": None})
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
