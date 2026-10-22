@@ -27,7 +27,7 @@ A REST API for a small clinic: patients see a doctor's free 30-minute slots, boo
 The database is seeded with the clinic's 5 doctors (see `migrations/versions/0002_seed_doctors.py`). Dr. Amina Odhiambo has ID `11111111-1111-1111-1111-111111111111` and works Monday to Friday 08:00 to 12:00 and 13:00 to 17:00, plus Saturday mornings.
 
 ```bash
-BASE=https://<your-service>.onrender.com     # or http://localhost:8000
+BASE=https://clinic-booking-system-five.vercel.app     # or http://localhost:8000
 DOC=11111111-1111-1111-1111-111111111111
 
 # 1. Create a patient
