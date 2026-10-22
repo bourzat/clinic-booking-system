@@ -18,7 +18,7 @@ The commands are written for **Ubuntu on WSL2**, which is the setup this project
 9. [Run the automated tests](#part-9-run-the-automated-tests)
 10. [Run everything with Docker](#part-10-run-everything-with-docker)
 11. [Daily cheat sheet](#part-11-daily-cheat-sheet)
-12. [CI/CD and deployment](#part-12-cicd-and-deployment)
+12. [Deploy to Vercel](#part-12-deploy-to-vercel)
 13. [Troubleshooting](#part-13-troubleshooting)
 
 ---
@@ -577,33 +577,152 @@ docker build -t clinic-booking-api:check .
 
 ---
 
-## Part 12: CI/CD and deployment
+## Part 12: Deploy to Vercel
 
-You don't need any of this to run the project locally. It's here so you know what happens after you push.
+### How it fits together
 
-`.github/workflows/ci-cd.yml` runs on GitHub Actions:
+```
+GitHub push to main
+   └─▶ GitHub Actions: Tests ──pass──▶ alembic upgrade head (Neon) ──▶ vercel deploy --prod ──▶ poll /health
+                                                                              │
+Browser / curl ──HTTPS──▶ Vercel Function (FastAPI, app/main.py, region fra1) ──▶ Neon Postgres (Frankfurt)
+```
+
+| Concern | On Render (before) | On Vercel (now) |
+|---|---|---|
+| Runs the app | Docker container | Vercel Python Function. It finds `app/main.py` and the `app` object automatically, and ignores the Dockerfile |
+| Database | Render Postgres | **Neon**, from the Vercel Marketplace (Vercel has no Postgres of its own) |
+| Migrations | Container ran `alembic upgrade head` on start | **GitHub Actions** runs `alembic upgrade head` before each deploy |
+| Who deploys | Render deploy hook from CI | `vercel deploy --prod` from CI. Vercel's own Git auto-deploy is turned off in `vercel.json` so nothing skips the tests |
+| Python | 3.12 in Dockerfile | 3.12 from `clinic-booking/.python-version` |
+
+Files that make this work: `clinic-booking/vercel.json`, `clinic-booking/.python-version`, `tzdata` in `requirements.txt` (time zone data, so `Africa/Nairobi` resolves on Vercel), and `.github/workflows/ci-cd.yml`.
+
+> Everything Vercel-related runs **from inside `clinic-booking/`**. That folder is the Vercel project.
+
+### 12.1 Install the Vercel CLI and log in
+
+You already have Node. Then:
+
+```bash
+npm install --global vercel
+vercel --version
+vercel login
+```
+
+### 12.2 Create the Vercel project
+
+```bash
+cd ~/clinic-booking-system/clinic-booking
+vercel link
+```
+
+Answer the prompts:
+
+- *Set up and link?* → **Y**
+- *Which scope?* → your account
+- *Link to existing project?* → **N**
+- *Project name?* → `clinic-booking-api`
+- *In which directory is your code located?* → **`./`** (you're already inside `clinic-booking/`)
+
+This creates `clinic-booking/.vercel/project.json` (git-ignored). It holds your `orgId` and `projectId`, which you'll need for CI.
+
+### 12.3 Create the database (Neon)
+
+1. Go to https://vercel.com, open the **clinic-booking-api** project, then **Storage → Create Database → Neon**.
+2. Region: **Frankfurt (aws-eu-central-1)**. It matches the function region `fra1` in `vercel.json` and is the closest to Nairobi.
+3. Plan: Free. Connect it to the project for **Production** (and Development if you want).
+
+Vercel adds these environment variables to the project for you:
+
+| Variable | Used for |
+|---|---|
+| `DATABASE_URL` | **Pooled** connection. The app uses it at runtime. |
+| `DATABASE_URL_UNPOOLED` | **Direct** connection. Use it for migrations only. |
+
+`CLINIC_TIMEZONE`, `SLOT_MINUTES` and `MIN_LEAD_MINUTES` already have the right defaults. Add them under **Settings → Environment Variables** only if you want to change them.
+
+### 12.4 Run the migrations against Neon (first time)
+
+The app won't work until the tables and seeded doctors exist. With your venv active:
+
+```bash
+cd ~/clinic-booking-system/clinic-booking
+source .venv/bin/activate
+vercel env pull .env.production.local --environment=production   # git-ignored
+
+# Run inside ( ... ) so the production URL does not leak into your shell
+( set -a; . ./.env.production.local; set +a
+  DATABASE_URL="$DATABASE_URL_UNPOOLED" alembic upgrade head )
+```
+
+You should see the `0001` and `0002` migrations run. After this, CI handles migrations.
+
+### 12.5 First deploy, by hand
+
+```bash
+vercel deploy --prod
+```
+
+The last line printed is your URL, for example `https://clinic-booking-api.vercel.app`. The first request after a quiet period is slower, because the function and the free Neon database both wake up on demand.
+
+### 12.6 Test the live API
+
+```bash
+curl -s https://clinic-booking-api.vercel.app/health; echo
+# {"status":"ok","database":"ok","commit":"..."}
+```
+
+Then run **all of Part 8** with one change:
+
+```bash
+BASE=https://clinic-booking-api.vercel.app
+```
+
+Swagger UI is at `https://clinic-booking-api.vercel.app/docs`.
+
+### 12.7 Automatic deploys from GitHub
+
+The workflow is at the **repo root** in `.github/workflows/ci-cd.yml`. GitHub only reads workflows from there.
 
 | Trigger | Job | What it does |
 |---|---|---|
-| Pull request into `main` | **Tests** | Starts Postgres 16, installs `requirements-dev.txt`, runs `pytest -v`, builds the Docker image |
-| Push or merge to `main` | **Tests**, then **Deploy** | After the tests pass, calls the Render deploy hook and waits until `/health` reports the new commit SHA |
+| Pull request into `main` | **Tests** | Postgres 16 service, `pytest -v`, Docker image build |
+| Push or merge to `main` | **Tests**, then **Deploy to Vercel** | Migrates Neon with `DATABASE_URL_UNPOOLED`, runs `vercel deploy --prod`, then polls `/health` until it reports the new commit SHA |
 
-Normal workflow:
+One-time GitHub setup: in your repo, go to **Settings → Secrets and variables → Actions**.
+
+| Kind | Name | Where to get it |
+|---|---|---|
+| Secret | `VERCEL_TOKEN` | https://vercel.com/account/tokens → Create |
+| Secret | `VERCEL_ORG_ID` | `orgId` in `clinic-booking/.vercel/project.json` |
+| Secret | `VERCEL_PROJECT_ID` | `projectId` in the same file |
+| Secret | `DATABASE_URL_UNPOOLED` | `grep DATABASE_URL_UNPOOLED clinic-booking/.env.production.local` |
+| Variable | `APP_URL` | `https://clinic-booking-api.vercel.app` (no trailing slash) |
+
+Then protect `main` under **Settings → Branches**. Require a pull request and require the **Tests** check to pass.
+
+Normal workflow from then on:
 
 ```bash
 git checkout -b feature/my-change
-# ...edit code, then run pytest...
+# ...edit, then run pytest...
 git add -A && git commit -m "Describe the change"
 git push -u origin feature/my-change
-# open a PR into main on GitHub → Tests run → merge → Deploy runs
+# open a PR → Tests run → merge → migrations + deploy run → /health shows the new SHA
 ```
 
-One-time Render setup (from the README):
+### 12.8 Operating it
 
-1. In Render, create a **Blueprint** from this repo. `render.yaml` creates the database and the web service.
-2. Copy the web service's **Deploy Hook** URL.
-3. In GitHub, go to **Settings → Secrets and variables → Actions**. Add the secret `RENDER_DEPLOY_HOOK_URL` and the variable `APP_URL` (your `https://<service>.onrender.com`).
-4. Protect `main` so that it requires a PR and a passing **Tests** check.
+| Task | Command |
+|---|---|
+| See recent deployments | `vercel ls` |
+| Live logs | `vercel logs https://clinic-booking-api.vercel.app` |
+| Roll back to the previous deploy | `vercel rollback` (this does **not** undo migrations, so keep schema changes backward compatible) |
+| Change an env var | `vercel env add NAME production`, then redeploy |
+| Open a SQL shell on Neon | `psql "$DATABASE_URL_UNPOOLED"` (from the pulled env file) |
+
+`render.yaml` is no longer used. You can delete it once Vercel is working.
 
 ---
 
@@ -626,3 +745,8 @@ One-time Render setup (from the README):
 | `422 BOOKING_TOO_SOON` | The time is less than 1 hour from now | Pick a later slot or a future date |
 | `422 VALIDATION_ERROR` on `start_at` | The time is missing its offset | Add `+03:00` (or `Z` for UTC) |
 | `/health` returns `503` | The API can't reach the database | Check `DATABASE_URL` in `.env` and that Postgres is up |
+| Vercel build says it cannot find an entrypoint or app | `vercel` was run from the repo root instead of `clinic-booking/` | `cd clinic-booking`, then run it again |
+| Live `/health` returns `503` | `DATABASE_URL` isn't set for Production, or Neon is in a different project | Vercel → Settings → Environment Variables; reconnect the Neon store to Production |
+| Live API returns `relation "doctors" does not exist` | Migrations never ran on Neon | Part 12.4 |
+| CI "Deploy to Vercel" says a secret is not set | A GitHub Actions secret is missing | Part 12.7 table |
+| CI never runs at all | The workflow isn't at the repo root | It must be `.github/workflows/ci-cd.yml` at the top level, not inside `clinic-booking/` |
