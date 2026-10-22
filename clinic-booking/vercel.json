@@ -1,11 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["fra1"],
-  "git": { "deploymentEnabled": false },
-  "functions": {
-    "app/main.py": {
-      "maxDuration": 30,
-      "excludeFiles": "{tests/**,scripts/**,.venv/**,Dockerfile,docker-compose.yml,render.yaml}"
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/app/main.py"
     }
-  }
+  ]
 }
