@@ -10,6 +10,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+defaults:
+  run:
+    working-directory: clinic-booking
+
 jobs:
   test:
     name: Tests
@@ -35,7 +39,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements-dev.txt
+          cache-dependency-path: clinic-booking/requirements-dev.txt
 
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
@@ -47,24 +51,48 @@ jobs:
         run: docker build -t clinic-booking-api:ci .
 
   deploy:
-    name: Deploy to Render
+    name: Deploy to Vercel
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
     steps:
-      - name: Trigger Render deploy
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: clinic-booking/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Vercel has no startup hook, so the schema is migrated here, before the new code goes live.
+      # Use the direct (unpooled) Neon URL: migrations need a session the pooler would not keep.
+      - name: Apply database migrations
         env:
-          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL_UNPOOLED }}
         run: |
-          test -n "$RENDER_DEPLOY_HOOK_URL" || { echo "RENDER_DEPLOY_HOOK_URL secret is not set"; exit 1; }
-          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+          test -n "$DATABASE_URL" || { echo "DATABASE_URL_UNPOOLED secret is not set"; exit 1; }
+          alembic upgrade head
+
+      - name: Deploy to production
+        run: |
+          test -n "$VERCEL_TOKEN" || { echo "VERCEL_TOKEN secret is not set"; exit 1; }
+          npm install --global vercel@latest
+          url=$(vercel deploy --prod --yes --token="$VERCEL_TOKEN" --env GIT_SHA="$GITHUB_SHA")
+          echo "Deployed to $url"
 
       - name: Wait for the new version to be live
         env:
           APP_URL: ${{ vars.APP_URL }}
         run: |
-          for i in $(seq 1 60); do
+          for i in $(seq 1 30); do
             body=$(curl -fsS "$APP_URL/health" || true)
             echo "attempt $i: $body"
             case "$body" in
@@ -72,4 +100,4 @@ jobs:
             esac
             sleep 10
           done
-          echo "New commit did not go live within 10 minutes"; exit 1
+          echo "New commit did not go live within 5 minutes"; exit 1
