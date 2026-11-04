@@ -107,7 +107,8 @@ def test_reschedule_concurrent_modification(service, make_doctor, make_patient):
     doctor, patient = make_doctor(), make_patient()
     appt = service.book(doctor.id, patient.id, at("2026-10-20 09:30"))
     
-    with patch.object(service.session, "commit", side_effect=StaleDataError("stale")):
+    # Patch flush() instead of commit() to catch the execution immediately
+    with patch.object(service.session, "flush", side_effect=StaleDataError("stale")):
         with pytest.raises(Conflict) as exc:
             service.reschedule(appt.id, at("2026-10-20 10:00"))
         assert exc.value.code == "CONCURRENT_MODIFICATION"
@@ -115,13 +116,8 @@ def test_reschedule_concurrent_modification(service, make_doctor, make_patient):
 def test_book_unrelated_integrity_error(service, make_doctor, make_patient):
     doctor, patient = make_doctor(), make_patient()
     
-    class FakeDiag:
-        constraint_name = "other_constraint"
-    class FakeOrig:
-        diag = FakeDiag()
-        
-    unrelated_exc = IntegrityError("statement", {}, orig=FakeOrig())
-    
+    # Use a standard Exception as orig so constraint_name evaluates to None, hitting line 185
+    unrelated_exc = IntegrityError("statement", {}, orig=Exception("Unknown DB Error"))
     with patch.object(service.session, "flush", side_effect=unrelated_exc):
         with pytest.raises(IntegrityError):
             service.book(doctor.id, patient.id, at("2026-10-20 09:30"))
