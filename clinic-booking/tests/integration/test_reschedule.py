@@ -76,3 +76,18 @@ def test_concurrent_cancel_and_reschedule(service, make_doctor, make_patient):
         assert exc.value.code == "CONCURRENT_MODIFICATION"
     finally:
         other_session.close()
+
+def test_reschedule_onto_patients_other_appointment(client, service, make_doctor, make_patient):
+    """The new doctor slot is free, so the pre-check passes and the database's
+    patient index is what rejects the move."""
+    patient = make_patient()
+    doctor_a = make_doctor()
+    doctor_b = make_doctor()
+    service.book(doctor_a.id, patient.id, at("2026-10-20 10:00"))
+    moving = service.book(doctor_b.id, patient.id, at("2026-10-20 09:00"))
+
+    r = client.patch(f"/appointments/{moving.id}/reschedule", json={"start_at": "2026-10-20T10:00:00+03:00"})
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "PATIENT_DOUBLE_BOOKED"
+    # The rollback left the original booking in place.
+    assert "2026-10-20T09:00:00+03:00" not in availability(client, doctor_b.id)
