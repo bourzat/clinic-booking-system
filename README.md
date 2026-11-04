@@ -1,4 +1,5 @@
-![CI/CD Pipeline Status](https://github.com/bourzat/clinic-booking-system/actions/workflows/ci-cd.yml/badge.svg)
+[![CI/CD Pipeline](https://github.com/bourzat/clinic-booking-system/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/bourzat/clinic-booking-system/actions/workflows/ci-cd.yml)
+[![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](https://github.com/bourzat/clinic-booking-system/actions/workflows/ci-cd.yml)
 
 # Clinic Booking API
 
