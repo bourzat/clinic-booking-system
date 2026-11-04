@@ -82,6 +82,9 @@ jobs:
           alembic upgrade head
 
       - name: Deploy to production
+        # Run from the repo root: the Vercel project's Root Directory is already
+        # clinic-booking, so running inside that folder would double the path.
+        working-directory: .
         run: |
           test -n "$VERCEL_TOKEN" || { echo "VERCEL_TOKEN secret is not set"; exit 1; }
           npm install --global vercel@latest
