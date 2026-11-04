@@ -11,3 +11,8 @@ def test_fixed_clock_rejects_naive_datetime():
     """Covers line 19: ValueError when instantiated without a timezone."""
     with pytest.raises(ValueError, match="timezone-aware"):
         FixedClock(datetime(2026, 10, 20, 9, 30))
+
+from app.core.clock import Clock
+
+def test_clock_protocol_now():
+    assert Clock.now(None) is None
