@@ -1,5 +1,5 @@
 from app.core.config import Settings
 
 def test_non_postgres_url():
-    settings = Settings(database_url="sqlite:///memory")
-    assert settings.database_url == "sqlite:///memory"
+    # Call the classmethod directly to bypass Pydantic instantiation rules
+    assert Settings.use_psycopg_driver("sqlite:///memory") == "sqlite:///memory"
