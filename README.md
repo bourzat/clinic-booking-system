@@ -6,7 +6,7 @@ A REST API for a small clinic: patients see a doctor's free 30-minute slots, boo
 |---|---|
 | Live API | `https://clinic-booking-system-five.vercel.app` |
 | Interactive docs | `https://clinic-booking-system-five.vercel.app/docs` |
-| Health check | `https://clinic-booking-system-five.vercel.app/docs/health` |
+| Health check | `https://clinic-booking-system-five.vercel.app/health` |
 
 > The free Render instance sleeps when idle. The first request after a quiet period can take up to a minute.
 
