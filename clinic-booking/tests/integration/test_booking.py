@@ -1,3 +1,8 @@
+from unittest.mock import patch
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import StaleDataError
+from app.core.errors import Conflict
+
 import uuid
 from datetime import time
 
@@ -88,3 +93,35 @@ def test_unknown_doctor_or_patient_is_404(client, make_doctor, make_patient):
 def test_inactive_doctor_is_404(client, make_doctor, make_patient):
     r = book(client, make_doctor(active=False).id, make_patient().id, "2026-10-20T09:30:00+03:00")
     assert r.status_code == 404
+
+def test_cancel_concurrent_modification(service, make_doctor, make_patient):
+    doctor, patient = make_doctor(), make_patient()
+    appt = service.book(doctor.id, patient.id, at("2026-10-20 09:30"))
+    
+    with patch.object(service.session, "commit", side_effect=StaleDataError("stale")):
+        with pytest.raises(Conflict) as exc:
+            service.cancel(appt.id, "reason")
+        assert exc.value.code == "CONCURRENT_MODIFICATION"
+
+def test_reschedule_concurrent_modification(service, make_doctor, make_patient):
+    doctor, patient = make_doctor(), make_patient()
+    appt = service.book(doctor.id, patient.id, at("2026-10-20 09:30"))
+    
+    with patch.object(service.session, "commit", side_effect=StaleDataError("stale")):
+        with pytest.raises(Conflict) as exc:
+            service.reschedule(appt.id, at("2026-10-20 10:00"))
+        assert exc.value.code == "CONCURRENT_MODIFICATION"
+
+def test_book_unrelated_integrity_error(service, make_doctor, make_patient):
+    doctor, patient = make_doctor(), make_patient()
+    
+    class FakeDiag:
+        constraint_name = "other_constraint"
+    class FakeOrig:
+        diag = FakeDiag()
+        
+    unrelated_exc = IntegrityError("statement", {}, orig=FakeOrig())
+    
+    with patch.object(service.session, "flush", side_effect=unrelated_exc):
+        with pytest.raises(IntegrityError):
+            service.book(doctor.id, patient.id, at("2026-10-20 09:30"))
