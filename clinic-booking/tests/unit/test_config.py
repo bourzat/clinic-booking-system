@@ -1,6 +1,8 @@
+import os
+from unittest.mock import patch
 from app.core.config import Settings
 
 def test_non_postgres_url():
-    # model_validate runs all validators on the provided dictionary
-    settings = Settings.model_validate({"database_url": "sqlite:///memory"})
-    assert settings.database_url == "sqlite:///memory"
+    with patch.dict(os.environ, {"DATABASE_URL": "sqlite:///memory"}):
+        settings = Settings()
+        assert settings.database_url == "sqlite:///memory"
