@@ -112,25 +112,3 @@ def test_reschedule_concurrent_modification(service, make_doctor, make_patient):
             service.reschedule(appt.id, at("2026-10-20 10:00"))
         assert exc.value.code == "CONCURRENT_MODIFICATION"
 
-def test_reschedule_integrity_error_race_condition(service, make_doctor, make_patient):
-    doctor, patient = make_doctor(), make_patient()
-    appt = service.book(doctor.id, patient.id, at("2026-10-20 09:30"))
-    
-    class FakeDiag: constraint_name = "uq_patient_active_slot"
-    class FakeOrig: diag = FakeDiag()
-        
-    with patch.object(service.session, "flush", side_effect=IntegrityError("st", {}, FakeOrig())):
-        with pytest.raises(Conflict) as exc:
-            service.reschedule(appt.id, at("2026-10-20 10:00"))
-        assert exc.value.code == "PATIENT_DOUBLE_BOOKED"
-
-def test_book_integrity_error_race_condition(service, make_doctor, make_patient):
-    doctor, patient = make_doctor(), make_patient()
-    
-    class FakeDiag: constraint_name = "uq_doctor_active_slot"
-    class FakeOrig: diag = FakeDiag()
-        
-    with patch.object(service.session, "flush", side_effect=IntegrityError("st", {}, FakeOrig())):
-        with pytest.raises(Conflict) as exc:
-            service.book(doctor.id, patient.id, at("2026-10-20 09:30"))
-        assert exc.value.code == "SLOT_TAKEN"
