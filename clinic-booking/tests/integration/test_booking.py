@@ -107,17 +107,18 @@ def test_reschedule_concurrent_modification(service, make_doctor, make_patient):
     doctor, patient = make_doctor(), make_patient()
     appt = service.book(doctor.id, patient.id, at("2026-10-20 09:30"))
     
-    # Mock add_event to bypass early autoflush crashes
-    with patch("app.services.booking.appt_repo.add_event", side_effect=StaleDataError("stale")):
-        with pytest.raises(Conflict) as exc:
-            service.reschedule(appt.id, at("2026-10-20 10:00"))
-        assert exc.value.code == "CONCURRENT_MODIFICATION"
+    # Use a nested transaction to isolate the setup queries from the flush mock
+    with service.session.begin_nested():
+        with patch.object(service.session, "flush", side_effect=StaleDataError("stale")):
+            with pytest.raises(Conflict) as exc:
+                service.reschedule(appt.id, at("2026-10-20 10:00"))
+            assert exc.value.code == "CONCURRENT_MODIFICATION"
 
 def test_book_unrelated_integrity_error(service, make_doctor, make_patient):
     doctor, patient = make_doctor(), make_patient()
     unrelated_exc = IntegrityError("statement", {}, orig=Exception("Unknown DB Error"))
     
-    # Mock add_event to safely trigger the IntegrityError inside the try block
-    with patch("app.services.booking.appt_repo.add_event", side_effect=unrelated_exc):
-        with pytest.raises(IntegrityError):
-            service.book(doctor.id, patient.id, at("2026-10-20 09:30"))
+    with service.session.begin_nested():
+        with patch.object(service.session, "flush", side_effect=unrelated_exc):
+            with pytest.raises(IntegrityError):
+                service.book(doctor.id, patient.id, at("2026-10-20 09:30"))
