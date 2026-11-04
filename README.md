@@ -1,3 +1,5 @@
+![CI/CD Pipeline Status](https://github.com/bourzat/clinic-booking-system/actions/workflows/ci-cd.yml/badge.svg)
+
 # Clinic Booking API
 
 A REST API for a small clinic: patients see a doctor's free 30-minute slots, book one, cancel with a reason, and reschedule. Built with FastAPI and PostgreSQL, deployed on Render, with tests and auto-deploy in GitHub Actions.
